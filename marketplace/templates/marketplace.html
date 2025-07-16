@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>SCADApocalypse Toolkit</title>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Orbitron', sans-serif;
+      background: linear-gradient(to right, #0f2027, #203a43, #2c5364);
+      color: #fff;
+      margin: 0;
+      padding: 20px;
+      backdrop-filter: blur(10px);
+    }
+    h1 {
+      font-size: 3em;
+      text-align: center;
+      color: #00ffff;
+      text-shadow: 0 0 10px #00ffff;
+    }
+    h2 {
+      border-bottom: 1px solid #00ffff;
+      padding-bottom: 5px;
+    }
+    select, input, textarea, button {
+      margin: 10px;
+      padding: 10px;
+      border-radius: 10px;
+      border: none;
+      outline: none;
+      background: rgba(255,255,255,0.1);
+      color: #fff;
+      font-weight: bold;
+      backdrop-filter: blur(10px);
+    }
+    button {
+      background: #00ffff;
+      color: #000;
+      cursor: pointer;
+      box-shadow: 0 0 10px #00ffff;
+      transition: transform 0.2s;
+    }
+    button:hover {
+      transform: scale(1.05);
+    }
+    #results, #logs {
+      margin-top: 20px;
+      padding: 20px;
+      border-radius: 15px;
+      height: 300px;
+      overflow-y: auto;
+      background: rgba(0, 0, 0, 0.6);
+    }
+    #results {
+      border: 2px solid #00ffff;
+    }
+    #logs {
+      border: 2px solid #ff00ff;
+      font-family: monospace;
+      white-space: pre-wrap;
+      line-height: 1.4em;
+    }
+    .log-info { color: #0f0; }
+    .log-error { color: #f00; }
+    .log-warning { color: #ff0; }
+    .log-debug { color: #0ff; }
+    .hidden { display: none; }
+  </style>
+  <script src="https://cdn.socket.io/4.4.1/socket.io.min.js"></script>
+</head>
+<body>
+  <h1>SCADApocalypse Toolkit</h1>
+
+  <div>
+    <h2>Run Scanner</h2>
+    <select id="scanner-select">
+      {% for scanner in scanners %}
+        <option value="{{ scanner }}">{{ scanner }}</option>
+      {% endfor %}
+    </select>
+    <input type="text" id="scanner-target" placeholder="Target IP" />
+    <input type="number" id="scanner-port" placeholder="Port (optional)" />
+    <button onclick="runScan()">Run Scan</button>
+  </div>
+
+  <div>
+    <h2>Run cve_scannner</h2>
+    <input type="text" id="cve-scada-system" placeholder="SCADA System Name" />
+    <button onclick="runCve()">Run cve_scannner</button>
+  </div>
+
+  <div>
+    <h2>Run Exploit</h2>
+    <select id="exploit-select">
+      {% for exploit in exploits %}
+        <option value="{{ exploit }}">{{ exploit }}</option>
+      {% endfor %}
+    </select>
+    <input type="text" id="exploit-target" placeholder="Target IP" />
+    <input type="number" id="exploit-port" placeholder="Port (optional)" />
+    <button onclick="runExploit()">Run Exploit</button>
+  </div>
+
+  <div>
+    <h2>Run Fuzzer</h2>
+    <select id="fuzzer-select">
+      {% for fuzzer in fuzzers %}
+        <option value="{{ fuzzer }}">{{ fuzzer }}</option>
+      {% endfor %}
+    </select>
+    <input type="text" id="fuzzer-target" placeholder="Target IP" />
+    <input type="number" id="fuzzer-port" placeholder="Port (optional)" />
+    <input type="text" id="fuzzer-payload" placeholder="Payload filename (optional)" />
+    <button onclick="runFuzzer()">Run Fuzzer</button>
+  </div>
+
+  <div>
+    <h2>Brute Force</h2>
+    <input type="text" id="brute-target" placeholder="Target IP" />
+    <input type="number" id="brute-port" placeholder="Port (optional)" />
+    <input type="text" id="brute-system" placeholder="SCADA System Name" />
+    <select id="brute-type" onchange="toggleBruteFields()">
+      <option value="http">HTTP</option>
+      <option value="ftp">FTP</option>
+      <option value="ssh">SSH</option>
+      <option value="telnet">TELNET</option>
+      <option value="snmp">SNMP</option>
+      <option value="vnc">VNC</option>
+    </select>
+
+    <div id="http-fields">
+      <input type="text" id="brute-dir" placeholder="Login URL path (default: /login)" />
+      <input type="text" id="brute-req" placeholder="POST format (e.g., user=^USER^&pass=^PASS^)" />
+      <input type="text" id="brute-invalid" placeholder="Invalid response string" />
+    </div>
+
+    <input type="text" id="brute-wordlist" placeholder="Wordlist file path (optional)" />
+    <button onclick="runBrute()">Run Brute Force</button>
+  </div>
+
+  <div>
+    <h2>Payloads & Plugins</h2>
+    <button onclick="listPayloads()">List Payloads</button>
+    <button onclick="refreshResults()">Refresh Results</button>
+  </div>
+
+  <div>
+    <h2>Results</h2>
+    <div id="results">No results yet.</div>
+  </div>
+
+  <div>
+    <h2>Live Logs</h2>
+    <div id="logs">Connecting to live logs...</div>
+  </div>
+
+  <script>
+    const socket = io();
+
+    socket.on('connect', () => {
+      log('[INFO] Connected to live logs.', 'log-info');
+    });
+
+    socket.on('disconnect', () => {
+      log('[WARNING] Disconnected from live logs.', 'log-warning');
+    });
+
+    socket.on('log_message', msg => {
+      const line = msg.data;
+      let cls = 'log-info';
+      if (line.includes('[ERROR]')) cls = 'log-error';
+      else if (line.includes('[WARNING]')) cls = 'log-warning';
+      else if (line.includes('[DEBUG]')) cls = 'log-debug';
+      log(line, cls);
+    });
+
+    function log(message, className) {
+      const logs = document.getElementById('logs');
+      const span = document.createElement("span");
+      span.className = className;
+      span.textContent = message + '\n';
+      logs.appendChild(span);
+      logs.scrollTop = logs.scrollHeight;
+    }
+
+    function runScan() {
+      fetch('/run_scan', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          plugin: getVal('scanner-select'),
+          target: getVal('scanner-target'),
+          port: getVal('scanner-port')
+        })
+      });
+      refreshResults();
+    }
+    function runCve() {
+      fetch('/cve_scan', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          cvescada: getVal('cve-scada-system'),
+          
+        })
+      });
+      refreshResults();
+    }
+
+    function runExploit() {
+      fetch('/run_exploit', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          plugin: getVal('exploit-select'),
+          target: getVal('exploit-target'),
+          port: getVal('exploit-port')
+        })
+      });
+      refreshResults();
+    }
+
+    function runFuzzer() {
+      fetch('/run_fuzzer', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          plugin: getVal('fuzzer-select'),
+          target: getVal('fuzzer-target'),
+          port: getVal('fuzzer-port'),
+          payload: getVal('fuzzer-payload')
+        })
+      });
+      refreshResults();
+    }
+
+    function runBrute() {
+      fetch('/run_brute', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          target: getVal('brute-target'),
+          port: getVal('brute-port'),
+          scada_system: getVal('brute-system'),
+          brute_type: getVal('brute-type'),
+          brute_dir: getVal('brute-dir'),
+          brute_requ: getVal('brute-req'),
+          brute_invalid_msg: getVal('brute-invalid'),
+          brute_wordlist: getVal('brute-wordlist')
+        })
+      });
+      refreshResults();
+    }
+
+    function toggleBruteFields() {
+      const type = getVal('brute-type');
+      const httpFields = document.getElementById('http-fields');
+      if (type === 'http') {
+        httpFields.classList.remove('hidden');
+      } else {
+        httpFields.classList.add('hidden');
+      }
+    }
+
+    function listPayloads() {
+      fetch('/list_payloads').then(r => r.json()).then(showResults);
+    }
+
+    function refreshResults() {
+      fetch('/results').then(r => r.json()).then(showResults);
+    }
+
+    function showResults(data) {
+      document.getElementById('results').textContent = JSON.stringify(data, null, 2);
+    }
+
+    function getVal(id) {
+      const el = document.getElementById(id);
+      return el && el.value ? el.value : null;
+    }
+
+    // setInterval(refreshResults, 9000);
+  </script>
+</body>
+</html>

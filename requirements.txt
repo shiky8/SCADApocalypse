@@ -1,0 +1,11 @@
+requests
+pymodbus
+websockets
+flask
+flask-socketio
+eventlet
+pysnmp
+jinja2
+paramiko
+telnetlib3
+pycryptodome
